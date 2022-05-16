@@ -1,5 +1,5 @@
-#include "base.h"
-#include "net_common.h"
+#include "../../common/inc/base.h"
+#include "../../common/inc/net_common.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
