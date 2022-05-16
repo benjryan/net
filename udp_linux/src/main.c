@@ -1,12 +1,14 @@
+#define _GNU_SOURCE
+
 #include "../../common/inc/base.h"
 #include "../../common/inc/net_common.h"
 
+#include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -86,6 +88,12 @@ static void server_read(Server* server, char* buffer, struct sockaddr_in client_
         case MSG_CONNECT: 
             handle_msg_connect(server, client_address);
             break;
+        case MSG_PING:
+            handle_msg_ping(server, msg->from_id);
+            break;
+        case MSG_DISCONNECT:
+            handle_msg_disconnect(server, msg->from_id);
+            break;
     }
 }
 
@@ -141,6 +149,8 @@ int main() {
         LogError("Could not create thread.");
         return EXIT_FAILURE;
     }
+
+    pthread_setname_np(thread_handle, "net_thread");
 
     while (status.online) {
     }
