@@ -109,8 +109,13 @@ static void arena_temp_end(Arena_Temp temp) {
     arena_pop_to(temp.arena, temp.pos);
 }
 
-#define LogError(fmt, ...) printf(("[Error] " fmt "\n"), ##__VA_ARGS__)
-#define Log(fmt, ...) printf(("[Info] " fmt "\n"), ##__VA_ARGS__)
+#ifdef NDEBUG
+#   define LogError(fmt, ...)
+#   define Log(fmt, ...)
+#else
+#   define LogError(fmt, ...) printf(("[Error] " fmt "\n"), ##__VA_ARGS__)
+#   define Log(fmt, ...) printf(("[Info] " fmt "\n"), ##__VA_ARGS__)
+#endif
 
 #define KB(x) ((x) << 10)
 #define MB(x) ((x) << 20)
