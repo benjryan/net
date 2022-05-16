@@ -114,7 +114,7 @@ static void arena_temp_end(Arena_Temp temp) {
 #   define Log(fmt, ...)
 #else
 #   define LogError(fmt, ...) printf(("[Error] " fmt "\n"), ##__VA_ARGS__)
-#   define Log(fmt, ...) printf(("[Info] " fmt "\n"), ##__VA_ARGS__)
+#   define Log(fmt, ...) printf(("[Log] " fmt "\n"), ##__VA_ARGS__)
 #endif
 
 #define KB(x) ((x) << 10)

@@ -4,6 +4,7 @@
 #include <winsock2.h>
 #include <Ws2tcpip.h>
 #include <mmsystem.h>
+#include <conio.h>
 
 #define SERVER_ADDRESS "192.168.56.101"
 
@@ -32,6 +33,7 @@ static void client_read(Client* client) {
     switch (msg->type) {
         case MSG_PING:
             client->latency = timeGetTime() - client->ping_time;
+            Log("Latency: %lu", client->latency);
             break;
         default:
             break;
@@ -53,7 +55,7 @@ static void client_listen(void* p) {
 }
 
 int main() {
-    Arena* arena = make_arena(MB(1));
+    Arena* arena = make_arena(KB(10));
     Client client;
     MemZeroStruct(&client);
 
@@ -134,6 +136,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    Log("Received MSG_ID with %hi.", msg->to_id);
     client.id = msg->to_id;
     client.online = TRUE;
     client.thread_active = FALSE;
@@ -149,6 +152,13 @@ int main() {
     client.ping_time = timeGetTime();
 
     while (TRUE) {
+        if (_kbhit()) {
+            char c = _getch();
+            if (c == 'q') {
+                break;
+            }
+        }
+
         if (timeGetTime() >= client.ping_time + HEARTBEAT) {
             client.ping_time = timeGetTime();
             Net_Message_Header msg = { MSG_PING, SERVER_ID, client.id };
@@ -156,9 +166,7 @@ int main() {
         }
     }
 
-    // shutdown
     if (client.online) {
-        // send disconnect message
         Net_Message_Header msg = { MSG_DISCONNECT, SERVER_ID, client.id };
         sendto(client.socket, (char*)&msg, sizeof(Net_Message_Header), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
         client.online = FALSE;
