@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 
-#include "../../common/inc/base.h"
-#include "../../common/inc/net_common.h"
+#include "base.h"
+#include "net_common.h"
 
 #include <pthread.h>
 #include <sys/socket.h>
@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <mongoc/mongoc.h>
 
 #define MAX_CLIENTS 1000
 #define LISTEN_BUFFER_SIZE 4096
@@ -152,8 +153,16 @@ int main() {
 
     pthread_setname_np(thread_handle, "net_thread");
 
+    mongoc_init();
+    mongoc_client_t* mongo_client = mongoc_client_new("mongodb://localhost:27017");
+    mongoc_database_t* mongo_db = mongoc_client_get_database(mongo_client, "test");
+    
     while (status.online) {
     }
+
+    mongoc_database_destroy(mongo_db);
+    mongoc_client_destroy(mongo_client);
+    mongoc_cleanup();
 
     success = close(status.socket);
     if (success != 0) {
