@@ -107,8 +107,8 @@ int main() {
     inet_pton(AF_INET, SERVER_ADDRESS, &client.server_address.sin_addr.s_addr);
     client.server_address_length = sizeof(struct sockaddr_in);
 
-    MSG_Base msg_connect = { MSG_TYPE_CLIENT_LOGIN, INVALID_ID, SERVER_ID };
-    s32 bytes_sent = sendto(client.socket, (char*)&msg_connect, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+    MSG_Client_Login msg_login = { MSG_TYPE_CLIENT_LOGIN, INVALID_ID, SERVER_ID, "Bonsoy" };
+    s32 bytes_sent = sendto(client.socket, (char*)&msg_login, sizeof(msg_login), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
     if (bytes_sent == 0) {
         LogError("Failed to send MSG_TYPE_CLIENT_LOGIN.");
         return EXIT_FAILURE;
