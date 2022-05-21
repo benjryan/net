@@ -24,6 +24,7 @@
 typedef struct {
     b8 online;
     struct sockaddr_in client_address;
+    char name[16];
 } Client; 
 
 typedef struct {
@@ -42,6 +43,7 @@ typedef struct {
     Client clients[MAX_CLIENTS];
     mongoc_client_t* mongo_client;
     mongoc_database_t* mongo_db;
+    mongoc_collection_t* mongo_col_characters;
 } Server;
 
 static s16 get_next_client_id(Server* server) {
@@ -52,26 +54,65 @@ static s16 get_next_client_id(Server* server) {
         }
     }
 
-    return -1;
+    return INVALID_ID;
 }
 
-static void handle_msg_client_login(Server* server, MSG_Base* msg, struct sockaddr_in client_address) {
+static void handle_msg_client_login(Server* server, MSG_Client_Login* msg, struct sockaddr_in client_address) {
     char* ip_address = inet_ntoa(client_address.sin_addr);
     Log("%s sent a connect message.", ip_address);
 
-    s16 new_client_id = get_next_client_id(server);
-    if (new_client_id >= 0) {
-        server->clients[new_client_id].client_address = client_address;
-    }
+    bson_t* filter = BCON_NEW("name", BCON_UTF8(msg->name));
+    bson_t* opts = BCON_NEW("limit", BCON_INT64(1));
+    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(server->mongo_col_characters, filter, opts, NULL);
 
-    MSG_Base reply = { MSG_TYPE_SERVER_LOGIN_SUCCESS, SERVER_ID, new_client_id };
-    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)&client_address, sizeof(client_address));
-    if (bytes_sent != sizeof(reply)) {
-        LogError("Could not send MSG_TYPE_SERVER_LOGIN_SUCCESS to %hi.", new_client_id);
+    Client* client = NULL;
+    s16 client_id = INVALID_ID;
+    const bson_t* document;
+    if (mongoc_cursor_next(cursor, &document)) {
+        client_id = get_next_client_id(server);
+        if (client_id >= 0) {
+            client = &server->clients[client_id];
+            client->client_address = client_address;
+            strncpy(client->name, msg->name, 16);
+
+            //bson_iter_t iter;
+            //bson_iter_t name;
+            //if (bson_iter_init(&iter, document)) {
+            //    while (bson_iter_next(&iter)) {
+            //        const char* key = bson_iter_key(&iter);
+            //        if (strcmp(key, "name") == 0) {
+            //            strncpy(client->name, bson_iter_utf8(&iter, NULL), 16);
+            //        }
+            //    }
+            //}
+        } else {
+            LogError("No available connections for client.");
+            return;
+        }
+    } else {
+        LogError("No character exists with name: %s.", msg->name);
         return;
     }
 
-    Log("Send MSG_ID %hi to client", new_client_id);
+
+    mongoc_cursor_destroy(cursor);
+    bson_destroy(opts);
+    bson_destroy(filter);
+
+    if (client_id == INVALID_ID) {
+        LogError("Login failure.");
+        return;
+    }
+
+    Log("%s has logged in.", client->name);
+    MSG_Base reply = { MSG_TYPE_SERVER_LOGIN_SUCCESS, SERVER_ID, client_id };
+    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)&client_address, sizeof(client_address));
+    if (bytes_sent != sizeof(reply)) {
+        LogError("Could not send MSG_TYPE_SERVER_LOGIN_SUCCESS to %hi.", client_id);
+        return;
+    }
+
+    Log("Send MSG_TYPE_SERVER_LOGIN_SUCCESS %hi to client", client_id);
 }
 
 static void handle_msg_client_ping(Server* server, MSG_Base* msg) {
@@ -84,7 +125,7 @@ static void handle_msg_client_ping(Server* server, MSG_Base* msg) {
         return;
     }
 
-    Log("Send MSG_PING to client");
+    Log("Send MSG_TYPE_SERVER_PING to client");
 }
 
 static void handle_msg_client_disconnect(Server* server, MSG_Base* msg) {
@@ -97,7 +138,7 @@ static void server_read(Server* server, char* buffer, struct sockaddr_in client_
 
     switch (msg->type) {
         case MSG_TYPE_CLIENT_LOGIN: 
-            handle_msg_client_login(server, msg, client_address);
+            handle_msg_client_login(server, (MSG_Client_Login*)msg, client_address);
             break;
         case MSG_TYPE_CLIENT_PING:
             handle_msg_client_ping(server, msg);
@@ -165,12 +206,12 @@ int main() {
 
     mongoc_init();
     server.mongo_client = mongoc_client_new("mongodb://localhost:27017");
-    server.mongo_db = mongoc_client_get_database(server.mongo_client, "test");
+    server.mongo_col_characters = mongoc_client_get_collection(server.mongo_client, "test", "characters");
     
     while (server.online) {
     }
 
-    mongoc_database_destroy(server.mongo_db);
+    mongoc_collection_destroy(server.mongo_col_characters);
     mongoc_client_destroy(server.mongo_client);
     mongoc_cleanup();
 
