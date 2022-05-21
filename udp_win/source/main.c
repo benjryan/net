@@ -6,6 +6,8 @@
 #include <mmsystem.h>
 #include <conio.h>
 
+#include "base.c"
+
 #define SERVER_ADDRESS "192.168.56.101"
 
 #define HEARTBEAT 5000
@@ -33,7 +35,7 @@ static void client_read(Client* client) {
     switch (msg->type) {
         case MSG_TYPE_SERVER_PING:
             client->latency = timeGetTime() - client->ping_time;
-            Log("Latency: %lu", client->latency);
+            Log("Received MSG_TYPE_SERVER_PING. Latency: %lu", client->latency);
             break;
         default:
             break;
@@ -105,7 +107,7 @@ int main() {
     inet_pton(AF_INET, SERVER_ADDRESS, &client.server_address.sin_addr.s_addr);
     client.server_address_length = sizeof(struct sockaddr_in);
 
-    MSG_Base msg_connect = { MSG_TYPE_CLIENT_LOGIN, SERVER_ID, INVALID_ID };
+    MSG_Base msg_connect = { MSG_TYPE_CLIENT_LOGIN, INVALID_ID, SERVER_ID };
     s32 bytes_sent = sendto(client.socket, (char*)&msg_connect, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
     if (bytes_sent == 0) {
         LogError("Failed to send MSG_TYPE_CLIENT_LOGIN.");
@@ -126,7 +128,7 @@ int main() {
     }
 
     MSG_Base* msg = (MSG_Base*)client.buffer;
-    if (msg->type != MSG_ID) {
+    if (msg->type != MSG_TYPE_SERVER_LOGIN_SUCCESS) {
         LogError("Received invalid message from server.");
         return EXIT_FAILURE;
     }
@@ -161,13 +163,13 @@ int main() {
 
         if (timeGetTime() >= client.ping_time + HEARTBEAT) {
             client.ping_time = timeGetTime();
-            MSG_Base msg = { MSG_TYPE_CLIENT_PING, SERVER_ID, client.id };
+            MSG_Base msg = { MSG_TYPE_CLIENT_PING, client.id, SERVER_ID };
             sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
         }
     }
 
     if (client.online) {
-        MSG_Base msg = { MSG_TYPE_CLIENT_DISCONNECT, SERVER_ID, client.id };
+        MSG_Base msg = { MSG_TYPE_CLIENT_DISCONNECT, client.id, SERVER_ID };
         sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
         client.online = FALSE;
         while (client.thread_active) {}
