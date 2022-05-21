@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall
+CFLAGS=-Wall -Wno-unused
 INC=-I../common/include \
 -I/usr/include/libbson-1.0 \
 -I/usr/include/libmongoc-1.0

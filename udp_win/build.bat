@@ -7,7 +7,7 @@ if not defined DevEnvDir (
 set opts=
 rem set cl_opts=-FC -GR- -EHa- -nologo -Zi -Fetest %opts%
 set cl_opts=
-set code=%cd%\src
+set code=%cd%\source
 pushd build
-cl %cl_opts% %code%\main.c
+cl %cl_opts% %code%\main.cpp
 popd

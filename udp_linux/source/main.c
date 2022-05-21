@@ -15,6 +15,9 @@
 #include <stdlib.h>
 #include <mongoc/mongoc.h>
 
+// NOTE(bryan): Unity build
+#include "base.c"
+
 #define MAX_CLIENTS 1000
 #define LISTEN_BUFFER_SIZE 4096
 
@@ -25,14 +28,20 @@ typedef struct {
 
 typedef struct {
     s16 type;
-    s16 to_id;
     s16 from_id;
-} MSG_Data;
+} MSG_Header;
+
+typedef struct {
+    MSG_Header header;
+    char name[16];
+} MSG_Connect;
 
 typedef struct {
     b8 online;
     int socket;
     Client clients[MAX_CLIENTS];
+    mongoc_client_t* mongo_client;
+    mongoc_database_t* mongo_db;
 } Server;
 
 static s16 get_next_client_id(Server* server) {
@@ -46,7 +55,7 @@ static s16 get_next_client_id(Server* server) {
     return -1;
 }
 
-static void handle_msg_connect(Server* server, struct sockaddr_in client_address) {
+static void handle_msg_client_login(Server* server, MSG_Base* msg, struct sockaddr_in client_address) {
     char* ip_address = inet_ntoa(client_address.sin_addr);
     Log("%s sent a connect message.", ip_address);
 
@@ -55,45 +64,46 @@ static void handle_msg_connect(Server* server, struct sockaddr_in client_address
         server->clients[new_client_id].client_address = client_address;
     }
 
-    MSG_Data msg = { MSG_ID, new_client_id, SERVER_ID };
-    s32 bytes_sent = sendto(server->socket, &msg, sizeof(msg), 0, (struct sockaddr*)&client_address, sizeof(client_address));
-    if (bytes_sent != sizeof(msg)) {
-        LogError("Could not send MSG_ID to %hi.", new_client_id);
+    MSG_Base reply = { MSG_TYPE_SERVER_LOGIN_SUCCESS, SERVER_ID, new_client_id };
+    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)&client_address, sizeof(client_address));
+    if (bytes_sent != sizeof(reply)) {
+        LogError("Could not send MSG_TYPE_SERVER_LOGIN_SUCCESS to %hi.", new_client_id);
         return;
     }
 
     Log("Send MSG_ID %hi to client", new_client_id);
 }
 
-static void handle_msg_ping(Server* server, s16 client_id) {
-    MSG_Data msg = { MSG_PING, client_id, SERVER_ID };
+static void handle_msg_client_ping(Server* server, MSG_Base* msg) {
+    s16 client_id = msg->from_id;
+    MSG_Base reply = { MSG_TYPE_SERVER_PING, SERVER_ID, client_id };
     struct sockaddr_in* client_address = &server->clients[client_id].client_address;
-    s32 bytes_sent = sendto(server->socket, &msg, sizeof(msg), 0, (struct sockaddr*)client_address, sizeof(*client_address));
-    if (bytes_sent != sizeof(msg)) {
-        LogError("Could not send MSG_PING to %hi.", client_id);
+    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)client_address, sizeof(*client_address));
+    if (bytes_sent != sizeof(reply)) {
+        LogError("Could not send MSG_TYPE_SERVER_PING to %hi.", client_id);
         return;
     }
 
     Log("Send MSG_PING to client");
 }
 
-static void handle_msg_disconnect(Server* server, s16 client_id) {
+static void handle_msg_client_disconnect(Server* server, MSG_Base* msg) {
     Log("Shutting down server.");
     server->online = FALSE;
 }
 
 static void server_read(Server* server, char* buffer, struct sockaddr_in client_address) {
-    MSG_Data* msg = (MSG_Data*)buffer;
+    MSG_Base* msg = (MSG_Base*)buffer;
 
     switch (msg->type) {
-        case MSG_CONNECT: 
-            handle_msg_connect(server, client_address);
+        case MSG_TYPE_CLIENT_LOGIN: 
+            handle_msg_client_login(server, msg, client_address);
             break;
-        case MSG_PING:
-            handle_msg_ping(server, msg->from_id);
+        case MSG_TYPE_CLIENT_PING:
+            handle_msg_client_ping(server, msg);
             break;
-        case MSG_DISCONNECT:
-            handle_msg_disconnect(server, msg->from_id);
+        case MSG_TYPE_CLIENT_DISCONNECT:
+            handle_msg_client_disconnect(server, msg);
             break;
     }
 }
@@ -116,11 +126,11 @@ static void* server_listen(void* p) {
 }
 
 int main() {
-    Server status;
-    status.online = TRUE;
+    Server server;
+    server.online = TRUE;
 
-    status.socket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (status.socket == -1) {
+    server.socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server.socket == -1) {
         LogError("Could not create UDP socket.");
         return EXIT_FAILURE;
     }
@@ -131,21 +141,21 @@ int main() {
     server_address.sin_port = htons(NET_PORT);
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    int success = bind(status.socket, (struct sockaddr*)&server_address, sizeof(server_address));
+    int success = bind(server.socket, (struct sockaddr*)&server_address, sizeof(server_address));
     if (success == -1) {
         LogError("Could not bind the socket.");
         return EXIT_FAILURE;
     }
 
     u64 socket_settings = 1;
-    success = ioctl(status.socket, FIONBIO, &socket_settings);
+    success = ioctl(server.socket, FIONBIO, &socket_settings);
     if (success == -1) {
         LogError("Could not set socket to non-blocking I/O.");
         return EXIT_FAILURE;
     }
 
     pthread_t thread_handle;
-    success = pthread_create(&thread_handle, NULL, server_listen, &status);
+    success = pthread_create(&thread_handle, NULL, server_listen, &server);
     if (success != 0) {
         LogError("Could not create thread.");
         return EXIT_FAILURE;
@@ -154,23 +164,22 @@ int main() {
     pthread_setname_np(thread_handle, "net_thread");
 
     mongoc_init();
-    mongoc_client_t* mongo_client = mongoc_client_new("mongodb://localhost:27017");
-    mongoc_database_t* mongo_db = mongoc_client_get_database(mongo_client, "test");
+    server.mongo_client = mongoc_client_new("mongodb://localhost:27017");
+    server.mongo_db = mongoc_client_get_database(server.mongo_client, "test");
     
-    while (status.online) {
+    while (server.online) {
     }
 
-    mongoc_database_destroy(mongo_db);
-    mongoc_client_destroy(mongo_client);
+    mongoc_database_destroy(server.mongo_db);
+    mongoc_client_destroy(server.mongo_client);
     mongoc_cleanup();
 
-    success = close(status.socket);
+    success = close(server.socket);
     if (success != 0) {
         LogError("Unable to close socket.");
     }
 
     return 0;
-
 }
 
 //int main() {

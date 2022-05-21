@@ -1,5 +1,5 @@
-#include "../../common/inc/base.h"
-#include "../../common/inc/net_common.h"
+#include "base.h"
+#include "net_common.h"
 
 #include <winsock2.h>
 #include <Ws2tcpip.h>
@@ -29,9 +29,9 @@ typedef struct {
 } Client;
 
 static void client_read(Client* client) {
-    Net_Message_Header* msg = (Net_Message_Header*)client->buffer;
+    MSG_Base* msg = (MSG_Base*)client->buffer;
     switch (msg->type) {
-        case MSG_PING:
+        case MSG_TYPE_SERVER_PING:
             client->latency = timeGetTime() - client->ping_time;
             Log("Latency: %lu", client->latency);
             break;
@@ -105,10 +105,10 @@ int main() {
     inet_pton(AF_INET, SERVER_ADDRESS, &client.server_address.sin_addr.s_addr);
     client.server_address_length = sizeof(struct sockaddr_in);
 
-    Net_Message_Header msg_connect = { MSG_CONNECT, SERVER_ID, INVALID_ID };
-    s32 bytes_sent = sendto(client.socket, (char*)&msg_connect, sizeof(Net_Message_Header), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+    MSG_Base msg_connect = { MSG_TYPE_CLIENT_LOGIN, SERVER_ID, INVALID_ID };
+    s32 bytes_sent = sendto(client.socket, (char*)&msg_connect, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
     if (bytes_sent == 0) {
-        LogError("Failed to send MSG_CONNECT.");
+        LogError("Failed to send MSG_TYPE_CLIENT_LOGIN.");
         return EXIT_FAILURE;
     }
 
@@ -120,12 +120,12 @@ int main() {
         }
 
         if (timeGetTime() > send_time + TIMEOUT) {
-            LogError("MSG_CONNECT timeout.");
+            LogError("MSG_TYPE_CLIENT_LOGIN timeout.");
             return EXIT_FAILURE;
         }
     }
 
-    Net_Message_Header* msg = (Net_Message_Header*)client.buffer;
+    MSG_Base* msg = (MSG_Base*)client.buffer;
     if (msg->type != MSG_ID) {
         LogError("Received invalid message from server.");
         return EXIT_FAILURE;
@@ -136,7 +136,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    Log("Received MSG_ID with %hi.", msg->to_id);
+    Log("Received MSG_TYPE_SERVER_LOGIN_SUCCESS with %hi.", msg->to_id);
     client.id = msg->to_id;
     client.online = TRUE;
     client.thread_active = FALSE;
@@ -161,14 +161,14 @@ int main() {
 
         if (timeGetTime() >= client.ping_time + HEARTBEAT) {
             client.ping_time = timeGetTime();
-            Net_Message_Header msg = { MSG_PING, SERVER_ID, client.id };
-            sendto(client.socket, (char*)&msg, sizeof(Net_Message_Header), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+            MSG_Base msg = { MSG_TYPE_CLIENT_PING, SERVER_ID, client.id };
+            sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
         }
     }
 
     if (client.online) {
-        Net_Message_Header msg = { MSG_DISCONNECT, SERVER_ID, client.id };
-        sendto(client.socket, (char*)&msg, sizeof(Net_Message_Header), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+        MSG_Base msg = { MSG_TYPE_CLIENT_DISCONNECT, SERVER_ID, client.id };
+        sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
         client.online = FALSE;
         while (client.thread_active) {}
         closesocket(client.socket);
