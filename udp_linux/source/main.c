@@ -38,12 +38,14 @@ typedef struct {
     mongoc_client_t* mongo_client;
     mongoc_database_t* mongo_db;
     mongoc_collection_t* mongo_col_characters;
+    char listen_buffer[LISTEN_BUFFER_SIZE];
 } Server;
 
 static s16 get_next_client_id(Server* server) {
     for (int i = 0; i < MAX_CLIENTS; ++i) {
         if (server->clients[i].online == FALSE) {
             server->clients[i].online = TRUE;
+            server->clients[i].id = i;
             return i;
         }
     }
@@ -76,7 +78,7 @@ static void packet_send(Server* server, Client* client, Packet_Header* packet, s
         return;
     }
 
-    Log("Sent %s to client id %hi.", packet_type_to_string(packet->type), client_id);
+    Log("Sent %s to client id %hi.", packet_type_to_string(packet->type), client->id);
 }
 
 static void receive_packet_client_login(Server* server, Packet_Client_Login* packet_in, struct sockaddr_in client_address) {
@@ -144,12 +146,14 @@ static void receive_packet_client_disconnect(Server* server, Packet_Header* msg)
     server->online = FALSE;
 }
 
-static void server_read(Server* server, char* buffer, struct sockaddr_in client_address) {
-    Packet_Header* msg = (Packet_Header*)buffer;
+static void server_read(Server* server, struct sockaddr_in client_address) {
+    Packet_Header* msg = (Packet_Header*)server->listen_buffer;
+
+    Log("Received %s from %hi. SEQ=%hu, ACK=%hu.", packet_type_to_string(msg->type), msg->from_id, msg->seq, msg->ack);
 
     switch (msg->type) {
         case Packet_Type_Client_Login: 
-            handle_packet_client_login(server, (Packet_Client_Login*)msg, client_address);
+            receive_packet_client_login(server, (Packet_Client_Login*)msg, client_address);
             break;
         case Packet_Type_Client_Ping:
             receive_packet_client_ping(server, msg);
@@ -160,34 +164,34 @@ static void server_read(Server* server, char* buffer, struct sockaddr_in client_
     }
 }
 
-static void* server_listen(void* p) {
-    Server* server = (Server*)p;
-    struct sockaddr_in client_address;
-    u32 client_length = sizeof(client_address);
-    char buffer[LISTEN_BUFFER_SIZE];
+//static void* server_listen(void* p) {
+//    Server* server = (Server*)p;
+//    struct sockaddr_in client_address;
+//    u32 client_length = sizeof(client_address);
+//    char buffer[LISTEN_BUFFER_SIZE];
+//
+//    while (server->online) {
+//        int bytes_read = recvfrom(server->socket, buffer, LISTEN_BUFFER_SIZE, 0, (struct sockaddr*)&client_address, &client_length);
+//        if (bytes_read > 0) {
+//            server_read(server, buffer, client_address);
+//        } else {
+//            usleep(200*1000); // 200ms
+//        }
+//    }
+//
+//    return 0;
+//}
 
-    while (server->online) {
-        int bytes_read = recvfrom(server->socket, buffer, LISTEN_BUFFER_SIZE, 0, (struct sockaddr*)&client_address, &client_length);
-        if (bytes_read > 0) {
-            server_read(server, buffer, client_address);
-        }
-    }
+function s32 server_init(Server* server) {
+    server->online = TRUE;
 
-    return 0;
-}
-
-int main() {
-    Server server;
-    MemZeroStruct(&server);
-    server.online = TRUE;
-
-    MemZeroArray(server.clients);
+    MemZeroArray(server->clients);
     for (int i = 0; i < MAX_CLIENTS; ++i) {
-        client_reset(&server.clients[i]);
+        client_reset(&server->clients[i]);
     }
 
-    server.socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (server.socket == -1) {
+    server->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (server->socket == -1) {
         LogError("Could not create UDP socket.");
         return EXIT_FAILURE;
     }
@@ -198,50 +202,120 @@ int main() {
     server_address.sin_port = htons(NET_PORT);
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    int success = bind(server.socket, (struct sockaddr*)&server_address, sizeof(server_address));
+    int success = bind(server->socket, (struct sockaddr*)&server_address, sizeof(server_address));
     if (success == -1) {
         LogError("Could not bind the socket.");
         return EXIT_FAILURE;
     }
 
     u64 socket_settings = 1;
-    success = ioctl(server.socket, FIONBIO, &socket_settings);
+    success = ioctl(server->socket, FIONBIO, &socket_settings);
     if (success == -1) {
         LogError("Could not set socket to non-blocking I/O.");
         return EXIT_FAILURE;
     }
 
-    pthread_t thread_handle;
-    success = pthread_create(&thread_handle, NULL, server_listen, &server);
-    if (success != 0) {
-        LogError("Could not create thread.");
-        return EXIT_FAILURE;
-    }
+    //pthread_t thread_handle;
+    //success = pthread_create(&thread_handle, NULL, server_listen, &server);
+    //if (success != 0) {
+    //    LogError("Could not create thread.");
+    //    return EXIT_FAILURE;
+    //}
 
-    pthread_setname_np(thread_handle, "net_thread");
+    //pthread_setname_np(thread_handle, "net_thread");
 
     mongoc_init();
-    server.mongo_client = mongoc_client_new("mongodb://localhost:27017");
-    server.mongo_col_characters = mongoc_client_get_collection(server.mongo_client, "test", "characters");
-    
-    while (server.online) {
-    }
-
-    mongoc_collection_destroy(server.mongo_col_characters);
-    mongoc_client_destroy(server.mongo_client);
-    mongoc_cleanup();
-
-    success = close(server.socket);
-    if (success != 0) {
-        LogError("Unable to close socket.");
-    }
+    server->mongo_client = mongoc_client_new("mongodb://localhost:27017");
+    server->mongo_col_characters = mongoc_client_get_collection(server->mongo_client, "test", "characters");
 
     return 0;
 }
 
-//int main() {
-//    unsigned int i = 0;
-//    unsigned long l = 0;
-//    printf("unsigned int=%lu", sizeof(i));
-//    printf("unsigned long=%lu", sizeof(l));
-//}
+function void net_read(Server* server) {
+    struct sockaddr_in client_address;
+    u32 client_length = sizeof(client_address);
+
+    while (TRUE) {
+        int bytes_read = recvfrom(server->socket, server->listen_buffer, LISTEN_BUFFER_SIZE, 0, (struct sockaddr*)&client_address, &client_length);
+        if (bytes_read <= 0) {
+            return;
+        }
+
+        server_read(server, client_address);
+    }
+}
+
+function void server_update(Server* server) {
+    net_read(server);
+}
+
+function void server_shutdown(Server* server) {
+    mongoc_collection_destroy(server->mongo_col_characters);
+    mongoc_client_destroy(server->mongo_client);
+    mongoc_cleanup();
+
+    int success = close(server->socket);
+    if (success != 0) {
+        LogError("Unable to close socket.");
+    }
+}
+
+struct timespec diff_timespec(const struct timespec *time1, const struct timespec *time0) {
+  assert(time1 && time1->tv_nsec < 1000000000);
+  assert(time0 && time0->tv_nsec < 1000000000);
+  struct timespec diff = {.tv_sec = time1->tv_sec - time0->tv_sec, .tv_nsec =
+      time1->tv_nsec - time0->tv_nsec};
+  if (diff.tv_nsec < 0) {
+    diff.tv_nsec += 1000000000;
+    diff.tv_sec--;
+  }
+  return diff;
+}
+
+#define TICK_NS 200000000L //200ms
+#define MAX_TICKS 1000000000L
+
+int main() {
+    Server server;
+    MemZeroStruct(&server);
+    server_init(&server);
+
+    s64 ticks = 0;
+    s64 acc = 0;
+    s64 busywait_count = 0;
+    struct timespec prev_ts;
+    struct timespec curr_ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &prev_ts);
+    while (server.online) {
+        //Log("diff.tv_sec = %li, diff.tv_nsec = %li", diff.tv_sec, diff.tv_nsec);
+        //Log("dt = %li", dt);
+        //Log("acc = %li", acc);
+        while (acc >= TICK_NS) {
+            server_update(&server);
+            ticks++;
+            if (ticks >= MAX_TICKS) {
+                ticks -= MAX_TICKS;
+            }
+            acc -= TICK_NS;
+            Log("Server tick. %li. Busywait = %li", ticks, busywait_count);
+        }
+
+        clock_gettime(CLOCK_MONOTONIC_RAW, &curr_ts);
+        struct timespec diff = diff_timespec(&curr_ts, &prev_ts);
+        s64 dt = 1000000000L * diff.tv_sec + diff.tv_nsec;
+        acc += dt;
+        prev_ts = curr_ts;
+
+        busywait_count++;
+
+        s64 us_to_frame = (TICK_NS - acc) / 1000;
+        s64 to_sleep = us_to_frame - 10;
+        if (to_sleep > 0) {
+            usleep(to_sleep);
+        }
+    }
+
+    server_shutdown(&server);
+
+    return 0;
+}
