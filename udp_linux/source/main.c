@@ -17,25 +17,19 @@
 
 // NOTE(bryan): Unity build
 #include "base.c"
+#include "net_common.c"
 
 #define MAX_CLIENTS 1000
 #define LISTEN_BUFFER_SIZE 4096
 
 typedef struct {
+    s16 id;
     b8 online;
     struct sockaddr_in client_address;
     char name[16];
+    u16 local_seq;
+    u16 remote_seq;
 } Client; 
-
-typedef struct {
-    s16 type;
-    s16 from_id;
-} MSG_Header;
-
-typedef struct {
-    MSG_Header header;
-    char name[16];
-} MSG_Connect;
 
 typedef struct {
     b8 online;
@@ -57,11 +51,39 @@ static s16 get_next_client_id(Server* server) {
     return INVALID_ID;
 }
 
-static void handle_msg_client_login(Server* server, MSG_Client_Login* msg, struct sockaddr_in client_address) {
+static void client_reset(Client* client) {
+    MemZeroStruct(client);
+    client->id = INVALID_ID;
+    client->local_seq = -1;
+    client->remote_seq = -1;
+}
+
+static void packet_init(Packet_Header* header, s32 size, Packet_Type type) {
+    MemZero(header, size);
+    header->type = type;
+}
+
+static void packet_send(Server* server, Client* client, Packet_Header* packet, s32 packet_size) {
+    packet->from_id = SERVER_ID;
+    packet->to_id = client->id;
+    client->local_seq++;
+    packet->seq = client->local_seq;
+    packet->ack = client->remote_seq;
+
+    s32 bytes_sent = sendto(server->socket, packet, packet_size, 0, (struct sockaddr*)&client->client_address, sizeof(client->client_address));
+    if (bytes_sent != packet_size) {
+        LogError("Could not send %s to client id %hi.", packet_type_to_string(packet->type), client->id);
+        return;
+    }
+
+    Log("Sent %s to client id %hi.", packet_type_to_string(packet->type), client_id);
+}
+
+static void receive_packet_client_login(Server* server, Packet_Client_Login* packet_in, struct sockaddr_in client_address) {
     char* ip_address = inet_ntoa(client_address.sin_addr);
     Log("%s sent a connect message.", ip_address);
 
-    bson_t* filter = BCON_NEW("name", BCON_UTF8(msg->name));
+    bson_t* filter = BCON_NEW("name", BCON_UTF8(packet_in->name));
     bson_t* opts = BCON_NEW("limit", BCON_INT64(1));
     mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(server->mongo_col_characters, filter, opts, NULL);
 
@@ -73,7 +95,7 @@ static void handle_msg_client_login(Server* server, MSG_Client_Login* msg, struc
         if (client_id >= 0) {
             client = &server->clients[client_id];
             client->client_address = client_address;
-            strncpy(client->name, msg->name, 16);
+            strncpy(client->name, packet_in->name, 16);
 
             //bson_iter_t iter;
             //bson_iter_t name;
@@ -90,7 +112,7 @@ static void handle_msg_client_login(Server* server, MSG_Client_Login* msg, struc
             return;
         }
     } else {
-        LogError("No character exists with name: %s.", msg->name);
+        LogError("No character exists with name: %s.", packet_in->name);
         return;
     }
 
@@ -105,46 +127,35 @@ static void handle_msg_client_login(Server* server, MSG_Client_Login* msg, struc
     }
 
     Log("%s has logged in.", client->name);
-    MSG_Base reply = { MSG_TYPE_SERVER_LOGIN_SUCCESS, SERVER_ID, client_id };
-    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)&client_address, sizeof(client_address));
-    if (bytes_sent != sizeof(reply)) {
-        LogError("Could not send MSG_TYPE_SERVER_LOGIN_SUCCESS to %hi.", client_id);
-        return;
-    }
-
-    Log("Send MSG_TYPE_SERVER_LOGIN_SUCCESS %hi to client", client_id);
+    Packet_Header packet_out;
+    packet_init(&packet_out, sizeof(packet_out), Packet_Type_Server_Login_Success);
+    packet_send(server, client, &packet_out, sizeof(packet_out));
 }
 
-static void handle_msg_client_ping(Server* server, MSG_Base* msg) {
-    s16 client_id = msg->from_id;
-    MSG_Base reply = { MSG_TYPE_SERVER_PING, SERVER_ID, client_id };
-    struct sockaddr_in* client_address = &server->clients[client_id].client_address;
-    s32 bytes_sent = sendto(server->socket, &reply, sizeof(reply), 0, (struct sockaddr*)client_address, sizeof(*client_address));
-    if (bytes_sent != sizeof(reply)) {
-        LogError("Could not send MSG_TYPE_SERVER_PING to %hi.", client_id);
-        return;
-    }
-
-    Log("Send MSG_TYPE_SERVER_PING to client");
+static void receive_packet_client_ping(Server* server, Packet_Header* packet_in) {
+    s16 client_id = packet_in->from_id;
+    Packet_Header packet_out;
+    packet_init(&packet_out, sizeof(packet_out), Packet_Type_Server_Ping);
+    packet_send(server, &server->clients[client_id], &packet_out, sizeof(packet_out));
 }
 
-static void handle_msg_client_disconnect(Server* server, MSG_Base* msg) {
+static void receive_packet_client_disconnect(Server* server, Packet_Header* msg) {
     Log("Shutting down server.");
     server->online = FALSE;
 }
 
 static void server_read(Server* server, char* buffer, struct sockaddr_in client_address) {
-    MSG_Base* msg = (MSG_Base*)buffer;
+    Packet_Header* msg = (Packet_Header*)buffer;
 
     switch (msg->type) {
-        case MSG_TYPE_CLIENT_LOGIN: 
-            handle_msg_client_login(server, (MSG_Client_Login*)msg, client_address);
+        case Packet_Type_Client_Login: 
+            handle_packet_client_login(server, (Packet_Client_Login*)msg, client_address);
             break;
-        case MSG_TYPE_CLIENT_PING:
-            handle_msg_client_ping(server, msg);
+        case Packet_Type_Client_Ping:
+            receive_packet_client_ping(server, msg);
             break;
-        case MSG_TYPE_CLIENT_DISCONNECT:
-            handle_msg_client_disconnect(server, msg);
+        case Packet_Type_Client_Disconnect:
+            receive_packet_client_disconnect(server, msg);
             break;
     }
 }
@@ -157,8 +168,7 @@ static void* server_listen(void* p) {
 
     while (server->online) {
         int bytes_read = recvfrom(server->socket, buffer, LISTEN_BUFFER_SIZE, 0, (struct sockaddr*)&client_address, &client_length);
-        if (bytes_read > 0)
-        {
+        if (bytes_read > 0) {
             server_read(server, buffer, client_address);
         }
     }
@@ -168,9 +178,15 @@ static void* server_listen(void* p) {
 
 int main() {
     Server server;
+    MemZeroStruct(&server);
     server.online = TRUE;
 
-    server.socket = socket(AF_INET, SOCK_DGRAM, 0);
+    MemZeroArray(server.clients);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        client_reset(&server.clients[i]);
+    }
+
+    server.socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (server.socket == -1) {
         LogError("Could not create UDP socket.");
         return EXIT_FAILURE;

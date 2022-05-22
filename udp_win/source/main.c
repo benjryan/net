@@ -7,6 +7,7 @@
 #include <conio.h>
 
 #include "base.c"
+#include "net_common.c"
 
 #define SERVER_ADDRESS "192.168.56.101"
 
@@ -28,14 +29,16 @@ typedef struct {
     s32 server_address_length;
     unsigned long ping_time;
     unsigned long latency;
+    u16 local_seq;
+    u16 remote_seq;
 } Client;
 
 static void client_read(Client* client) {
-    MSG_Base* msg = (MSG_Base*)client->buffer;
-    switch (msg->type) {
-        case MSG_TYPE_SERVER_PING:
+    Packet_Header* packet = (Packet_Header*)client->buffer;
+    switch (packet->type) {
+        case Packet_Type_Server_Ping:
             client->latency = timeGetTime() - client->ping_time;
-            Log("Received MSG_TYPE_SERVER_PING. Latency: %lu", client->latency);
+            Log("Received %s. Latency: %lu", packet_type_to_string(packet->type), client->latency);
             break;
         default:
             break;
@@ -56,10 +59,29 @@ static void client_listen(void* p) {
     client->thread_active = FALSE;
 }
 
+static b8 send_packet(Client* client, Packet_Header* packet, s32 packet_size) {
+    packet->from_id = client->id;
+    packet->to_id = SERVER_ID;
+    client->local_seq++;
+    packet->seq = client->local_seq;
+    packet->ack = client->remote_seq;
+
+    s32 bytes_sent = sendto(client->socket, (char*)packet, packet_size, 0, (struct sockaddr*)&client->server_address, client->server_address_length);
+    if (bytes_sent == 0) {
+        LogError("Failed to send %s.", packet_type_to_string(packet->type));
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 int main() {
     Arena* arena = make_arena(KB(10));
     Client client;
     MemZeroStruct(&client);
+    client.id = INVALID_ID;
+    client.local_seq = -1;
+    client.remote_seq = -1;
 
     WSADATA wsa_data;
     u16 version = MAKEWORD(2, 0);
@@ -88,7 +110,7 @@ int main() {
     }
     arena_temp_end(scratch);
 
-    client.socket = socket(AF_INET, SOCK_DGRAM, 0);
+    client.socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (client.socket == INVALID_SOCKET) {
         LogError("Unable to create socket.");
         return EXIT_FAILURE;
@@ -107,11 +129,17 @@ int main() {
     inet_pton(AF_INET, SERVER_ADDRESS, &client.server_address.sin_addr.s_addr);
     client.server_address_length = sizeof(struct sockaddr_in);
 
-    MSG_Client_Login msg_login = { MSG_TYPE_CLIENT_LOGIN, INVALID_ID, SERVER_ID, "Bonsoy" };
-    s32 bytes_sent = sendto(client.socket, (char*)&msg_login, sizeof(msg_login), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
-    if (bytes_sent == 0) {
-        LogError("Failed to send MSG_TYPE_CLIENT_LOGIN.");
-        return EXIT_FAILURE;
+    char username[128];
+    printf("Username: ");
+    scanf_s("%s", username, (u32)sizeof(username));
+    //char* password = getpass("Password: ");
+
+    {
+        Packet_Client_Login packet;
+        MemZeroStruct(&packet);
+        packet.header.type = Packet_Type_Client_Login;
+        strncpy_s(packet.name, 16, username, 16);
+        send_packet(&client, (Packet_Header*)&packet, sizeof(packet));
     }
 
     u32 send_time = timeGetTime();
@@ -122,24 +150,24 @@ int main() {
         }
 
         if (timeGetTime() > send_time + TIMEOUT) {
-            LogError("MSG_TYPE_CLIENT_LOGIN timeout.");
+            LogError("Packet_Type_Client_Login timeout.");
             return EXIT_FAILURE;
         }
     }
 
-    MSG_Base* msg = (MSG_Base*)client.buffer;
-    if (msg->type != MSG_TYPE_SERVER_LOGIN_SUCCESS) {
+    Packet_Header* packet = (Packet_Header*)client.buffer;
+    if (packet->type != Packet_Type_Server_Login_Success) {
         LogError("Received invalid message from server.");
         return EXIT_FAILURE;
     }
 
-    if (msg->to_id == INVALID_ID) {
+    if (packet->to_id == INVALID_ID) {
         LogError("Server is full.");
         return EXIT_FAILURE;
     }
 
-    Log("Received MSG_TYPE_SERVER_LOGIN_SUCCESS with %hi.", msg->to_id);
-    client.id = msg->to_id;
+    Log("Received %s with %hi.", packet_type_to_string(packet->type), packet->to_id);
+    client.id = packet->to_id;
     client.online = TRUE;
     client.thread_active = FALSE;
 
@@ -163,14 +191,20 @@ int main() {
 
         if (timeGetTime() >= client.ping_time + HEARTBEAT) {
             client.ping_time = timeGetTime();
-            MSG_Base msg = { MSG_TYPE_CLIENT_PING, client.id, SERVER_ID };
-            sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+
+            Packet_Header packet;
+            MemZeroStruct(&packet);
+            packet.type = Packet_Type_Client_Ping;
+            send_packet(&client, &packet, sizeof(packet));
         }
     }
 
     if (client.online) {
-        MSG_Base msg = { MSG_TYPE_CLIENT_DISCONNECT, client.id, SERVER_ID };
-        sendto(client.socket, (char*)&msg, sizeof(MSG_Base), 0, (struct sockaddr*)&client.server_address, client.server_address_length);
+        Packet_Header packet;
+        MemZeroStruct(&packet);
+        packet.type = Packet_Type_Client_Disconnect;
+        send_packet(&client, &packet, sizeof(packet));
+
         client.online = FALSE;
         while (client.thread_active) {}
         closesocket(client.socket);
