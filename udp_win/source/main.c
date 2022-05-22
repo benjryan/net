@@ -5,6 +5,7 @@
 #include <Ws2tcpip.h>
 #include <mmsystem.h>
 #include <conio.h>
+#include <synchapi.h>
 
 #include "base.c"
 #include "net_common.c"
@@ -53,6 +54,8 @@ static void client_listen(void* p) {
         s32 bytes_read = recvfrom(client->socket, client->buffer, BUFFER_SIZE, 0, (struct sockaddr*)&client->server_address, &client->server_address_length);
         if (bytes_read > 0) {
             client_read(client);
+        } else {
+            Sleep(1000);
         }
     }
 
@@ -147,6 +150,8 @@ int main() {
         s32 bytes_read = recvfrom(client.socket, client.buffer, BUFFER_SIZE, 0, (struct sockaddr*)&client.server_address, &client.server_address_length);
         if (bytes_read > 0) {
             break;
+        } else {
+            Sleep(1000);
         }
 
         if (timeGetTime() > send_time + TIMEOUT) {
@@ -185,6 +190,7 @@ int main() {
         if (_kbhit()) {
             char c = _getch();
             if (c == 'q') {
+                Log("Disconnecting...");
                 break;
             }
         }
@@ -197,6 +203,8 @@ int main() {
             packet.type = Packet_Type_Client_Ping;
             send_packet(&client, &packet, sizeof(packet));
         }
+
+        Sleep(1000);
     }
 
     if (client.online) {
