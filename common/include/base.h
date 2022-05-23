@@ -97,12 +97,12 @@ typedef struct {
     u64 pos;
 } Arena_Temp;
 
-#ifdef NDEBUG
-#   define LogError(fmt, ...)
-#   define Log(fmt, ...)
-#else
+#ifdef LOGS
 #   define LogError(fmt, ...) printf(("[Error] " fmt "\n"), ##__VA_ARGS__)
 #   define Log(fmt, ...) printf(("[Log] " fmt "\n"), ##__VA_ARGS__)
+#else
+#   define LogError(fmt, ...)
+#   define Log(fmt, ...)
 #endif
 
 #define KB(x) ((x) << 10)
@@ -117,5 +117,7 @@ function void* arena_push_zero(Arena* arena, u64 size);
 function void arena_pop_to(Arena* arena, u64 pos);
 function Arena_Temp arena_temp_begin(Arena* arena);
 function void arena_temp_end(Arena_Temp temp);
+
+function s32 str_hash(char* str);
 
 #endif // BASE_H

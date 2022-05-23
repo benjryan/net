@@ -72,6 +72,7 @@ static void packet_send(Server* server, Client* client, Packet_Header* packet, s
     client->local_seq++;
     packet->seq = client->local_seq;
     packet->ack = client->remote_seq;
+    packet->frame = server->frame;
 
     s32 bytes_sent = sendto(server->socket, packet, packet_size, 0, (struct sockaddr*)&client->client_address, sizeof(client->client_address));
     if (bytes_sent != packet_size) {
@@ -82,11 +83,13 @@ static void packet_send(Server* server, Client* client, Packet_Header* packet, s
     Log("Sent %s to client id %hi.", packet_type_to_string(packet->type), client->id);
 }
 
-static void receive_packet_client_login(Server* server, Packet_Client_Login* packet_in, struct sockaddr_in client_address) {
-    char* ip_address = inet_ntoa(client_address.sin_addr);
-    Log("%s sent a connect message.", ip_address);
 
-    bson_t* filter = BCON_NEW("name", BCON_UTF8(packet_in->name));
+function void receive_packet_client_login(Server* server, Packet_Client_Login* packet_in, struct sockaddr_in client_address) {
+    //char* ip_address = inet_ntoa(client_address.sin_addr);
+    //Log("%s sent a connect message.", ip_address);
+
+    //bson_t* filter = BCON_NEW("name", BCON_UTF8(packet_in->name));
+    bson_t* filter = BCON_NEW("name_hash", BCON_INT32(str_hash(packet_in->name)));
     bson_t* opts = BCON_NEW("limit", BCON_INT64(1));
     mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(server->mongo_col_characters, filter, opts, NULL);
 
@@ -119,35 +122,34 @@ static void receive_packet_client_login(Server* server, Packet_Client_Login* pac
         return;
     }
 
-
     mongoc_cursor_destroy(cursor);
     bson_destroy(opts);
     bson_destroy(filter);
 
-    if (client_id == INVALID_ID) {
-        LogError("Login failure.");
-        return;
-    }
+    //if (client_id == INVALID_ID) {
+    //    LogError("Login failure.");
+    //    return;
+    //}
 
-    Log("%s has logged in.", client->name);
+    //Log("%s has logged in.", client->name);
     Packet_Header packet_out;
     packet_init(&packet_out, sizeof(packet_out), Packet_Type_Server_Login_Success);
     packet_send(server, client, &packet_out, sizeof(packet_out));
 }
 
-static void receive_packet_client_ping(Server* server, Packet_Header* packet_in) {
+function void receive_packet_client_ping(Server* server, Packet_Header* packet_in) {
     s16 client_id = packet_in->from_id;
     Packet_Header packet_out;
     packet_init(&packet_out, sizeof(packet_out), Packet_Type_Server_Ping);
     packet_send(server, &server->clients[client_id], &packet_out, sizeof(packet_out));
 }
 
-static void receive_packet_client_disconnect(Server* server, Packet_Header* msg) {
+function void receive_packet_client_disconnect(Server* server, Packet_Header* msg) {
     Log("Shutting down server.");
     server->online = FALSE;
 }
 
-static void server_read(Server* server, struct sockaddr_in client_address) {
+function void server_read(Server* server, struct sockaddr_in client_address) {
     Packet_Header* msg = (Packet_Header*)server->listen_buffer;
 
     Log("Received %s from %hi. SEQ=%hu, ACK=%hu.", packet_type_to_string(msg->type), msg->from_id, msg->seq, msg->ack);

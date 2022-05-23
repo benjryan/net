@@ -44,3 +44,13 @@ function Arena_Temp arena_temp_begin(Arena* arena) {
 function void arena_temp_end(Arena_Temp temp) {
     arena_pop_to(temp.arena, temp.pos);
 }
+
+function s32 str_hash(char* str) {
+    s32 hash = 5381;
+    s32 c;
+
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+    return hash;
+}
