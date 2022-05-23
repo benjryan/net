@@ -53,6 +53,35 @@ typedef s64 b64;
 typedef float f32;
 typedef double f64;
 
+global s8  min_S8  = (s8) 0x80;
+global s16 min_S16 = (s16)0x8000;
+global s32 min_S32 = (s32)0x80000000;
+global s64 min_S64 = (s64)0x8000000000000000llu;
+
+global s8  max_S8  = (s8) 0x7f;
+global s16 max_S16 = (s16)0x7fff;
+global s32 max_S32 = (s32)0x7fffffff;
+global s64 max_S64 = (s64)0x7fffffffffffffffllu;
+
+global u8  max_U8  = 0xff;
+global u16 max_U16 = 0xffff;
+global u32 max_U32 = 0xffffffff;
+global u64 max_U64 = 0xffffffffffffffffllu;
+
+global f32 machine_epsilon_F32 = 1.1920929e-7f;
+global f32 pi_F32  = 3.14159265359f;
+global f32 tau_F32 = 6.28318530718f;
+global f32 e_F32 = 2.71828182846f;
+global f32 gold_big_F32 = 1.61803398875f;
+global f32 gold_small_F32 = 0.61803398875f;
+
+global f64 machine_epsilon_F64 = 2.220446e-16;
+global f64 pi_F64  = 3.14159265359;
+global f64 tau_F64 = 6.28318530718;
+global f64 e_F64 = 2.71828182846;
+global f64 gold_big_F64 = 1.61803398875;
+global f64 gold_small_F64 = 0.61803398875;
+
 #define TRUE 1
 #define FALSE 0
 

@@ -33,6 +33,7 @@ typedef struct {
 
 typedef struct {
     b8 online;
+    u16 frame;
     int socket;
     Client clients[MAX_CLIENTS];
     mongoc_client_t* mongo_client;
@@ -273,46 +274,47 @@ struct timespec diff_timespec(const struct timespec *time1, const struct timespe
 }
 
 #define TICK_NS 200000000L //200ms
-#define MAX_TICKS 1000000000L
 
 int main() {
     Server server;
     MemZeroStruct(&server);
     server_init(&server);
 
-    s64 ticks = 0;
     s64 acc = 0;
     s64 busywait_count = 0;
-    struct timespec prev_ts;
-    struct timespec curr_ts;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &prev_ts);
+    struct timespec frame_start;
+    struct timespec frame_end;
+    struct timespec loop_start;
+    struct timespec loop_end;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &loop_start);
     while (server.online) {
         //Log("diff.tv_sec = %li, diff.tv_nsec = %li", diff.tv_sec, diff.tv_nsec);
         //Log("dt = %li", dt);
         //Log("acc = %li", acc);
         while (acc >= TICK_NS) {
+            clock_gettime(CLOCK_MONOTONIC_RAW, &frame_start);
             server_update(&server);
-            ticks++;
-            if (ticks >= MAX_TICKS) {
-                ticks -= MAX_TICKS;
-            }
+            server.frame++;
             acc -= TICK_NS;
-            Log("Server tick. %li. Busywait = %li", ticks, busywait_count);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &frame_end);
+            struct timespec frame_diff = diff_timespec(&frame_end, &frame_start);
+            s64 frame_dt = 1000000000L * frame_diff.tv_sec + frame_diff.tv_nsec;
+            Log("Frame = %hu. Duration = %fms.", server.frame, frame_dt / 1000000.0);
         }
 
-        clock_gettime(CLOCK_MONOTONIC_RAW, &curr_ts);
-        struct timespec diff = diff_timespec(&curr_ts, &prev_ts);
-        s64 dt = 1000000000L * diff.tv_sec + diff.tv_nsec;
-        acc += dt;
-        prev_ts = curr_ts;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &loop_end);
+        struct timespec loop_diff = diff_timespec(&loop_end, &loop_start);
+        s64 loop_dt = 1000000000L * loop_diff.tv_sec + loop_diff.tv_nsec;
+        acc += loop_dt;
+        loop_start = loop_end;
 
         busywait_count++;
 
-        s64 us_to_frame = (TICK_NS - acc) / 1000;
-        s64 to_sleep = us_to_frame - 10;
-        if (to_sleep > 0) {
-            usleep(to_sleep);
-        }
+        //s64 remaining_microseconds = (TICK_NS - acc) / 1000;
+        //s64 to_sleep = remaining_microseconds - 10;
+        //if (to_sleep > 0) {
+        //    usleep(to_sleep);
+        //}
     }
 
     server_shutdown(&server);

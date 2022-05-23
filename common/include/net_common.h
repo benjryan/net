@@ -8,12 +8,6 @@
 #define SERVER_ID  -2
 #define INVALID_ID -1
 
-//#define MSG_TYPE_CLIENT_LOGIN         0
-//#define MSG_TYPE_SERVER_LOGIN_SUCCESS 1
-//#define MSG_TYPE_CLIENT_PING          2
-//#define MSG_TYPE_SERVER_PING          3
-//#define MSG_TYPE_CLIENT_DISCONNECT    4
-
 typedef enum {
     Packet_Type_Client_Login,
     Packet_Type_Server_Login_Success,
@@ -26,6 +20,7 @@ typedef struct {
     s16 type;
     s16 from_id;
     s16 to_id;
+    u16 frame;
     u16 seq;
     u16 ack;
 } Packet_Header;
